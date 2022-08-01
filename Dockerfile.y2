@@ -9,6 +9,8 @@ RUN apt_install \
     ffmpeg libsm6 libxext6 \
  && :
 
+RUN pip_install --upgrade pip
+
 RUN pip_install \
     pyqt6 \
     "networkx ~= 2.4" \
