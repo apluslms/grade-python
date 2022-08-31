@@ -1,13 +1,34 @@
 ARG FULL_TAG=latest
 FROM apluslms/grade-python:$FULL_TAG
 
+ENV XDG_RUNTIME_DIR=/tmp/runtime-nobody
+
 RUN apt_install \
     python3-coverage \
-    python3-pyqt5 \
+    xvfb \
+    libxkbcommon-x11-0 \
+    libegl1 \
+    libfontconfig \
+    libglib2.0-0 \
+    libdbus-1-3 \
+    libxcb-glx0-dev \
+    libxcb-keysyms1-dev \
+    libxcb-image0-dev \
+    libxcb-shm0-dev \
+    libxcb-icccm4-dev \
+    libxcb-sync0-dev \
+    libxcb-xfixes0-dev \
+    libxcb-shape0-dev \
+    libxcb-randr0-dev \
+    libxcb-render-util0-dev \
+    libxcb-xinerama0-dev \
+    libxcb-sync-dev \
  && :
 
 RUN pip_install \
     "networkx ~= 2.4" \
+    "PyQt6 ~= 6.3.1" \
+    "pyvirtualdisplay ~= 3.0" \
  && find /usr/local/lib/python* -type d -regex '.*/locale/[a-z_A-Z]+' -not -regex '.*/\(en\|fi\|sv\)' -print0 | xargs -0 rm -rf \
  && find /usr/local/lib/python* -type d -name 'tests' -print0 | xargs -0 rm -rf \
  && :
