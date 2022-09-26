@@ -22,6 +22,7 @@ There is also few additional versions of the image:
  * `rdf-*` includes Python package rdflib on top of the base
  * `xls-*` includes Python packages xlrd and xlwt on top of the base for parsing Excel files
  * `ply-*` includes the Python package PLY (parser and lexer generator)
+ * `smt-*` includes pysmt and dd on top of the ply layer
 
 
 Utility commands
