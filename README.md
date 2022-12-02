@@ -23,6 +23,8 @@ There is also few additional versions of the image:
  * `xls-*` includes Python packages xlrd and xlwt on top of the base for parsing Excel files
  * `ply-*` includes the Python package PLY (parser and lexer generator)
  * `smt-*` includes pysmt and dd on top of the ply layer
+ * `mec-*` (for the Mechatronic Machine Design course) includes Python packages requests, bs4 and validators
+   on top of the math layer
 
 
 Utility commands
