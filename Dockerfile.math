@@ -3,11 +3,7 @@ FROM apluslms/grade-python:$FULL_TAG
 
 RUN apt_install \
     bc \
-    python3-matplotlib \
     python3-tk \
-    python3-scipy \
-    python3-numpy \
-    python3-pil \
  && pip_install \
 # Excel file parser is useful with pandas
     openpyxl \
@@ -16,4 +12,8 @@ RUN apt_install \
     bokeh==2.3.3 \
     iapws \
     pixelmatch \
+    "matplotlib >= 3.5.0" \
+    "scipy >= 1.7.0" \
+    "numpy >= 1.20.0" \
+    "Pillow >= 9.0.0" \
  && :
