@@ -1,0 +1,9 @@
+ARG FULL_TAG=latest
+FROM apluslms/grade-python:$FULL_TAG
+
+RUN apt_install \
+    postgresql \
+ && pip_install \
+    psycopg2-binary \
+ && :
+
