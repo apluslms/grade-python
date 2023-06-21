@@ -1,5 +1,9 @@
 #!/bin/sh
 
+docker run --privileged --rm tonistiigi/binfmt --install all
+
+docker buildx create --use default
+
 if [ "${DOCKER_TAG#*-}" = "${DOCKER_TAG}" ]; then
     base=${DOCKER_TAG}
     main=
@@ -16,11 +20,10 @@ fi
 if [ "$full" != "latest" ]; then
     echo "############################################################"
     echo "### pulling latest image, so layer cache is update."
-    docker pull $DOCKER_REPO:latest || true
+    docker pull $DOCKER_REPO:latest || true
     echo "############################################################"
 fi
 
-: > tags.txt
 for layer in "" "math" "rdf" "xls" "y2" "ml" "ply" "jupyter" "smt" "mec" "psql"; do
     if [ "$layer" ]; then
         tag="$layer-$full"
@@ -35,13 +38,25 @@ for layer in "" "math" "rdf" "xls" "y2" "ml" "ply" "jupyter" "smt" "mec" "psql";
     echo "### creating '$DOCKER_REPO:$tag' with '$file'"
     echo "############################################################"
 
-    docker build --build-arg "MAIN_TAG=$main" --build-arg "BASE_TAG=$base" \
-                 --build-arg "FULL_TAG=$full" --build-arg "RESULT_TAG=$tag" \
-                 -t $DOCKER_REPO:$tag -f "$file" .
+    if [ "$layer" = "y2" ] || [ "$layer" = "smt" ]; then
+        platform="linux/amd64"
+    else
+        platform="linux/amd64,linux/arm64"
+    fi
+
+    docker buildx build \
+    --build-arg "MAIN_TAG=$main" \
+    --build-arg "BASE_TAG=$base" \
+    --build-arg "FULL_TAG=$full" \
+    --build-arg "RESULT_TAG=$tag" \
+    --push \
+    --platform $platform \
+    -t $DOCKER_REPO:$tag \
+    -f "$file" .
+
     res=$?
     if [ $res -ne 0 ]; then
         echo "Building layer $layer returned $res" >&2
         exit $res
     fi
-    echo "$tag" >> tags.txt
 done

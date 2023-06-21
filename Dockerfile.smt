@@ -1,5 +1,5 @@
 ARG FULL_TAG=latest
-FROM apluslms/grade-python:ply-$FULL_TAG
+FROM --platform=$TARGETPLATFORM apluslms/grade-python:ply-$FULL_TAG
 
 # Solvers for pySMT like msat (MathSAT5) must be compiled from source.
 RUN apt_install \

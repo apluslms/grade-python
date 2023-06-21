@@ -1,5 +1,5 @@
 ARG FULL_TAG=latest
-FROM apluslms/grade-python:ml-$FULL_TAG
+FROM --platform=$TARGETPLATFORM apluslms/grade-python:ml-$FULL_TAG
 
 RUN pip_install \
     nbconvert~=7.2.9 \
