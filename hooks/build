@@ -38,7 +38,7 @@ for layer in "" "math" "rdf" "xls" "y2" "ml" "ply" "jupyter" "smt" "mec" "psql";
     echo "### creating '$DOCKER_REPO:$tag' with '$file'"
     echo "############################################################"
 
-    if [ "$layer" = "y2" ] || [ "$layer" = "smt" ]; then
+    if [ "$layer" = "smt" ]; then
         platform="linux/amd64"
     else
         platform="linux/amd64,linux/arm64"

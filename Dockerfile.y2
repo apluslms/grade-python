@@ -4,6 +4,7 @@ FROM --platform=$TARGETPLATFORM apluslms/grade-python:$FULL_TAG
 ENV XDG_RUNTIME_DIR=/tmp/runtime-nobody
 
 RUN apt_install \
+    python3-pyqt6 \
     python3-coverage \
     xvfb \
     libxkbcommon-x11-0 \
@@ -27,7 +28,6 @@ RUN apt_install \
 
 RUN pip_install \
     "networkx ~= 2.4" \
-    "PyQt6 ~= 6.3.1" \
     "pyvirtualdisplay ~= 3.0" \
  && find /usr/local/lib/python* -type d -regex '.*/locale/[a-z_A-Z]+' -not -regex '.*/\(en\|fi\|sv\)' -print0 | xargs -0 rm -rf \
  && find /usr/local/lib/python* -type d -name 'tests' -print0 | xargs -0 rm -rf \

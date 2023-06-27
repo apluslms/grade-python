@@ -1,2 +1,2 @@
 #!/bin/sh
-exec pip3 install --no-cache-dir --disable-pip-version-check "$@"
+exec /usr/local/venv_grader/bin/pip3 install --no-cache-dir --disable-pip-version-check "$@"
