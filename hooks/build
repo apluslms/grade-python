@@ -24,7 +24,7 @@ if [ "$full" != "latest" ]; then
     echo "############################################################"
 fi
 
-for layer in "" "math" "rdf" "xls" "y2" "ml" "ply" "jupyter" "smt" "mec" "psql"; do
+for layer in "" "math" "rdf" "xls" "y2" "ml" "ply" "jupyter" "smt" "mec" "psql" "comp"; do
     if [ "$layer" ]; then
         tag="$layer-$full"
         file="Dockerfile.$layer"

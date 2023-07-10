@@ -26,6 +26,8 @@ There is also few additional versions of the image:
  * `mec-*` (for the Mechatronic Machine Design course) includes Python packages requests, bs4 and validators
    on top of the math layer
  * `psql-*` includes PostgreSQL server and the Python package psycopg2
+ * `comp-*` (for the Competitive Programming course) includes Python packages requests, bs4 and pandas
+   on top of the base
 
 
 Utility commands

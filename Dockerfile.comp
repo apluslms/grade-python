@@ -1,0 +1,8 @@
+ARG FULL_TAG=latest
+FROM --platform=$TARGETPLATFORM apluslms/grade-python:$FULL_TAG
+
+RUN pip_install \
+    beautifulsoup4 \
+    requests \
+    pandas \
+ && :
