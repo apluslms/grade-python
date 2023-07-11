@@ -19,14 +19,16 @@ There is also few additional versions of the image:
 
  * `math-*` includes Python packages matplotlib, scipy, numpy and bokeh on top of the base and in addition, openpyxl, xlrd and xlwt for Excel file parsing
  * `ml-*` includes Python packages pandas, scikit-learn and numpy on top of the math layer
+ * `jupyter-*` includes Python packages nbconvert and ipython on top of the ml layer
  * `rdf-*` includes Python package rdflib on top of the base
  * `xls-*` includes Python packages xlrd and xlwt on top of the base for parsing Excel files
  * `ply-*` includes the Python package PLY (parser and lexer generator)
  * `smt-*` includes pysmt and dd on top of the ply layer
+ * `y2-*` (for the Basic Course in Programming Y2 course) includes Python packages pyqt6, coverage, networkx and pyvirtualdisplay on top of the base
  * `mec-*` (for the Mechatronic Machine Design course) includes Python packages requests, bs4 and validators
    on top of the math layer
  * `psql-*` includes PostgreSQL server and the Python package psycopg2
- * `comp-*` (for the Competitive Programming course) includes Python packages requests, bs4 and pandas
+ * `comp-*` (for the Competitive Programming course) includes Python packages requests, bs4, pandas, lxml and html5lib
    on top of the base
 
 
