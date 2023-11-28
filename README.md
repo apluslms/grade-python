@@ -37,7 +37,7 @@ Utility commands
 
 In addition to [grading-base](https://github.com/apluslms/grading-base), this container provides following utilities.
 
-* `graderutils [--use-iotester] [--use-rpyc] [--novalidate] [--container] [--show-config] [--develop-mode] -- path_to_test_config`
+* `graderutils [--use-iotester] [--use-rpyc] [--novalidate] [--container] [--show-config] [--develop-mode] [--exercise-path <absolute-path>] -- [<test-config-absolute-path>]`
   * `--use-iotester`
 
     Create the necessary directory structure with the correct permissions required by iotester.
@@ -58,10 +58,14 @@ In addition to [grading-base](https://github.com/apluslms/grading-base), this co
     Display all unhandled exceptions unformatted.
     Also implies `--show-config`.
     By default, exceptions related to improperly configured tests are caught and hidden behind a generic error message.
-    This is to prevent unwanted leaking of grader test details, which might reveal e.g. parts of the model solution, if one is used.
+    This is to prevent unwanted leaking of grader test details, which might reveal e.g. parts of the model solution, if one is used
+  * `--exercise-path`
+
+    Change the directory where grader tests are run. Default is `/exercise`. Personalized programming exercises
+    can set this to `/personalized_exercise`.
 
   Executes `graderutils.main` (or `graderutils.__main__` when `--use-rpyc` flag is set) Python module using `capture` wrapper (check [grading-base](https://github.com/apluslms/grading-base)).
-  Provided arguments, except for `--use-iotester` and `--use-rpyc`, are passed to the Python module.
+  Provided arguments, except for `--use-iotester`, `--use-rpyc`, and `--exercise-path`, are passed to the Python module.
   If there are no arguments, then the module is executed with `/exercise/test_config.yaml` as the first argument.
   In other words, if you define graderutils configuration in `test_config.yaml`, you only need to have `graderutils` in the config.yaml `cmd` field.
 

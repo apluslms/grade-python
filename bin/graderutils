@@ -1,31 +1,45 @@
 #!/bin/sh
-export PYTHONPATH=/exercise
-export EXERCISE_PATH=/exercise
 
-# Arguments, except for --use-iotester and --use-rpyc, are collected to variable 'args' and passed on to graderutils
+EXERCISE_PATH=/exercise
+
+# Arguments, except for --use-iotester, --use-rpyc, and --exercise-path, are collected to the variable 'args' and passed onto graderutils
 args=""
 use_iotester=false
 use_rpyc=false
-for arg in "$@"; do
-    case "$arg" in
-        --use-iotester) use_iotester=true ;;
-        --use-rpyc) use_rpyc=true ;;
-        --novalidate) args="${args}${arg} " ;;
-        --container) args="${args}${arg} " ;;
-        --show-config) args="${args}${arg} " ;;
-        --develop-mode) args="${args}${arg} " ;;
-        --) args="${args}${arg} " ;;
+test_config_path=""
+while [ "$1" ]; do
+    case "$1" in
+        --exercise-path)
+            # Check if the next argument exists
+            if [ -z "$2" ] || [ "$(echo "$2" | cut -c1)" = "-" ]; then
+                echo "ERROR: --exercise-path requires a string argument" >&2
+                exit 1
+            fi
+            EXERCISE_PATH="$2"
+            shift 2
+            ;;
+        --use-iotester) use_iotester=true; shift ;;
+        --use-rpyc) use_rpyc=true; shift ;;
+        --novalidate) args="${args}${1} "; shift ;;
+        --container) args="${args}${1} "; shift ;;
+        --show-config) args="${args}${1} "; shift ;;
+        --develop-mode) args="${args}${1} "; shift ;;
+        --) args="${args}${1} "; shift ;;
         -*)
             echo "ERROR: Invalid option '$1' for $0" >&2
-            echo "usage: $0 [--use-iotester] [--use-rpyc] [--novalidate] [--container] [--show-config] [--develop-mode] -- path_to_test_config" >&2
+            echo "Usage: $0 [--use-iotester] [--use-rpyc] [--novalidate] [--container] [--show-config] [--develop-mode] [--exercise-path <absolute-path>] -- [<test-config-absolute-path>]" >&2
             exit 64
             ;;
-        *) args="${args}${arg} " ;;
+        *) args="${args}${1} "; test_config_path="${1}"; shift ;;
     esac
 done
 
-# If 'args' is empty, use default test_config.yaml path
-[ "$args" ] || args="$EXERCISE_PATH"/test_config.yaml
+PYTHONPATH="$EXERCISE_PATH"
+export PYTHONPATH
+export EXERCISE_PATH
+
+# If 'test_config_path' is empty, use default test_config.yaml path
+[ "$test_config_path" ] || args="${args}${EXERCISE_PATH}/test_config.yaml"
 
 if [ "$use_iotester" = true ]; then
     export MODEL_PATH=/model
