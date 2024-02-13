@@ -9,6 +9,7 @@ RUN apt_install \
  && :
 
 RUN pip_install \
+    z3-solver \
     dd \
     pysmt \
  && pysmt-install --confirm-agreement --msat \
