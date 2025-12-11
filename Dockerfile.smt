@@ -11,6 +11,6 @@ RUN apt_install \
 RUN pip_install \
     z3-solver \
     dd \
-    pysmt \
+    "pysmt == 0.9.7.dev337" \
  && pysmt-install --confirm-agreement --msat \
  && :
