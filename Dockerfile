@@ -17,7 +17,7 @@ RUN apt_install \
  && python3 -m venv --system-site-packages /usr/local/venv_grader \
 \
  && pip_install \
-    rpyc==5.3.1 \
+    rpyc==6.0.2 \
     https://github.com/apluslms/python-grader-utils/archive/v$GRADER_UTILS_VER.tar.gz \
     https://github.com/teemulehtinen/grader_qlc/archive/v1.0.5.tar.gz \
     qlcpy==1.0.18 \
