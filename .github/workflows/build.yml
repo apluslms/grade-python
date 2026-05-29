@@ -1,0 +1,1155 @@
+name: Build and push Docker image
+
+on:
+  push:
+    branches:
+      - '*'
+
+jobs:
+  prepare:
+    name: Determine base tag and full tag
+    runs-on: ubuntu-24.04
+    outputs:
+      base_tag: ${{ steps.tags.outputs.base_tag }}
+      full_tag: ${{ steps.tags.outputs.full_tag }}
+
+    steps:
+      - name: Determine base tag and full tag
+        id: tags
+        run: |
+          if [ "${GITHUB_REF_NAME#*-}" = "${GITHUB_REF_NAME}" ]; then
+            if [ "${GITHUB_REF_NAME}" = "master" ]; then
+              base=latest
+              full=$base
+            else
+              base=${GITHUB_REF_NAME}
+              full=$base
+            fi
+            echo "base_tag=$base" >> "$GITHUB_OUTPUT"
+            echo "full_tag=$full" >> "$GITHUB_OUTPUT"
+          else
+              main=${GITHUB_REF_NAME%-*}
+              base=${GITHUB_REF_NAME##*-}
+              full=$main-$base
+              if [ "${base#*u}" ]; then
+                  base=${base%%u*}
+              fi
+              echo "base_tag=$base" >> "$GITHUB_OUTPUT"
+              echo "full_tag=$full" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-base:
+    name: Build base image (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build and push platform-specific digest (no manifest tag yet)
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: ${{ matrix.platform }}
+          push: true
+          build-args: |
+            BASE_TAG=${{ needs.prepare.outputs.base_tag }}
+          outputs: type=image,name=apluslms/grade-python,push-by-digest=true,name-canonical=true
+
+      # Save the digest so the merge job can find it
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-base-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  merge-base:
+    name: Merge base manifests
+    runs-on: ubuntu-24.04
+    needs: build-base
+
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-base-*
+          merge-multiple: true
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Determine tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: apluslms/grade-python
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,enable=${{ github.ref == 'refs/heads/master' }},value=latest
+            type=ref,enable=${{ github.ref != 'refs/heads/master' }},event=branch
+
+      - name: Create and push multi-arch manifest
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf 'apluslms/grade-python@sha256:%s ' *)
+
+  build-math:
+    name: Build math image (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    needs:
+      - prepare
+      - merge-base
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build and push platform-specific digest (no manifest tag yet)
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.math
+          platforms: ${{ matrix.platform }}
+          push: true
+          build-args: |
+            FULL_TAG=${{ needs.prepare.outputs.full_tag }}
+          outputs: type=image,name=apluslms/grade-python,push-by-digest=true,name-canonical=true
+
+      # Save the digest so the merge job can find it
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-math-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  merge-math:
+    name: Merge math manifests
+    runs-on: ubuntu-24.04
+    needs:
+      - prepare
+      - build-math
+
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-math-*
+          merge-multiple: true
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Determine tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: apluslms/grade-python
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,enable=${{ github.ref == 'refs/heads/master' }},value=math-latest
+            type=raw,enable=${{ github.ref != 'refs/heads/master' }},value=math-${{ needs.prepare.outputs.full_tag }}
+
+      - name: Create and push multi-arch manifest
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf 'apluslms/grade-python@sha256:%s ' *)
+
+  build-rdf:
+    name: Build rdf image (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    needs:
+      - prepare
+      - merge-base
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build and push platform-specific digest (no manifest tag yet)
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.rdf
+          platforms: ${{ matrix.platform }}
+          push: true
+          build-args: |
+            FULL_TAG=${{ needs.prepare.outputs.full_tag }}
+          outputs: type=image,name=apluslms/grade-python,push-by-digest=true,name-canonical=true
+
+      # Save the digest so the merge job can find it
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-rdf-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  merge-rdf:
+    name: Merge rdf manifests
+    runs-on: ubuntu-24.04
+    needs:
+      - prepare
+      - build-rdf
+
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-rdf-*
+          merge-multiple: true
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Determine tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: apluslms/grade-python
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,enable=${{ github.ref == 'refs/heads/master' }},value=rdf-latest
+            type=raw,enable=${{ github.ref != 'refs/heads/master' }},value=rdf-${{ needs.prepare.outputs.full_tag }}
+
+      - name: Create and push multi-arch manifest
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf 'apluslms/grade-python@sha256:%s ' *)
+
+  build-xls:
+    name: Build xls image (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    needs:
+      - prepare
+      - merge-base
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build and push platform-specific digest (no manifest tag yet)
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.xls
+          platforms: ${{ matrix.platform }}
+          push: true
+          build-args: |
+            FULL_TAG=${{ needs.prepare.outputs.full_tag }}
+          outputs: type=image,name=apluslms/grade-python,push-by-digest=true,name-canonical=true
+
+      # Save the digest so the merge job can find it
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-xls-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  merge-xls:
+    name: Merge xls manifests
+    runs-on: ubuntu-24.04
+    needs:
+      - prepare
+      - build-xls
+
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-xls-*
+          merge-multiple: true
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Determine tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: apluslms/grade-python
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,enable=${{ github.ref == 'refs/heads/master' }},value=xls-latest
+            type=raw,enable=${{ github.ref != 'refs/heads/master' }},value=xls-${{ needs.prepare.outputs.full_tag }}
+
+      - name: Create and push multi-arch manifest
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf 'apluslms/grade-python@sha256:%s ' *)
+
+  build-y2:
+    name: Build y2 image (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    needs:
+      - prepare
+      - merge-base
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build and push platform-specific digest (no manifest tag yet)
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.y2
+          platforms: ${{ matrix.platform }}
+          push: true
+          build-args: |
+            FULL_TAG=${{ needs.prepare.outputs.full_tag }}
+          outputs: type=image,name=apluslms/grade-python,push-by-digest=true,name-canonical=true
+
+      # Save the digest so the merge job can find it
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-y2-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  merge-y2:
+    name: Merge y2 manifests
+    runs-on: ubuntu-24.04
+    needs:
+      - prepare
+      - build-y2
+
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-y2-*
+          merge-multiple: true
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Determine tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: apluslms/grade-python
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,enable=${{ github.ref == 'refs/heads/master' }},value=y2-latest
+            type=raw,enable=${{ github.ref != 'refs/heads/master' }},value=y2-${{ needs.prepare.outputs.full_tag }}
+
+      - name: Create and push multi-arch manifest
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf 'apluslms/grade-python@sha256:%s ' *)
+
+  build-ml:
+    name: Build ml image (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    needs:
+      - prepare
+      - merge-math
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build and push platform-specific digest (no manifest tag yet)
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.ml
+          platforms: ${{ matrix.platform }}
+          push: true
+          build-args: |
+            FULL_TAG=${{ needs.prepare.outputs.full_tag }}
+          outputs: type=image,name=apluslms/grade-python,push-by-digest=true,name-canonical=true
+
+      # Save the digest so the merge job can find it
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-ml-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  merge-ml:
+    name: Merge ml manifests
+    runs-on: ubuntu-24.04
+    needs:
+      - prepare
+      - build-ml
+
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-ml-*
+          merge-multiple: true
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Determine tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: apluslms/grade-python
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,enable=${{ github.ref == 'refs/heads/master' }},value=ml-latest
+            type=raw,enable=${{ github.ref != 'refs/heads/master' }},value=ml-${{ needs.prepare.outputs.full_tag }}
+
+      - name: Create and push multi-arch manifest
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf 'apluslms/grade-python@sha256:%s ' *)
+
+  build-ply:
+    name: Build ply image (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    needs:
+      - prepare
+      - merge-base
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build and push platform-specific digest (no manifest tag yet)
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.ply
+          platforms: ${{ matrix.platform }}
+          push: true
+          build-args: |
+            FULL_TAG=${{ needs.prepare.outputs.full_tag }}
+          outputs: type=image,name=apluslms/grade-python,push-by-digest=true,name-canonical=true
+
+      # Save the digest so the merge job can find it
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-ply-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  merge-ply:
+    name: Merge ply manifests
+    runs-on: ubuntu-24.04
+    needs:
+      - prepare
+      - build-ply
+
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-ply-*
+          merge-multiple: true
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Determine tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: apluslms/grade-python
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,enable=${{ github.ref == 'refs/heads/master' }},value=ply-latest
+            type=raw,enable=${{ github.ref != 'refs/heads/master' }},value=ply-${{ needs.prepare.outputs.full_tag }}
+
+      - name: Create and push multi-arch manifest
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf 'apluslms/grade-python@sha256:%s ' *)
+
+  build-jupyter:
+    name: Build jupyter image (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    needs:
+      - prepare
+      - merge-ml
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build and push platform-specific digest (no manifest tag yet)
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.jupyter
+          platforms: ${{ matrix.platform }}
+          push: true
+          build-args: |
+            FULL_TAG=${{ needs.prepare.outputs.full_tag }}
+          outputs: type=image,name=apluslms/grade-python,push-by-digest=true,name-canonical=true
+
+      # Save the digest so the merge job can find it
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-jupyter-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  merge-jupyter:
+    name: Merge jupyter manifests
+    runs-on: ubuntu-24.04
+    needs:
+      - prepare
+      - build-jupyter
+
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-jupyter-*
+          merge-multiple: true
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Determine tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: apluslms/grade-python
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,enable=${{ github.ref == 'refs/heads/master' }},value=jupyter-latest
+            type=raw,enable=${{ github.ref != 'refs/heads/master' }},value=jupyter-${{ needs.prepare.outputs.full_tag }}
+
+      - name: Create and push multi-arch manifest
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf 'apluslms/grade-python@sha256:%s ' *)
+
+  build-smt:
+    name: Build smt image (linux/amd64)
+    runs-on: ubuntu-24.04
+    needs:
+      - prepare
+      - merge-ply
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build and push platform-specific digest (no manifest tag yet)
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.smt
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            FULL_TAG=${{ needs.prepare.outputs.full_tag }}
+          outputs: type=image,name=apluslms/grade-python,push-by-digest=true,name-canonical=true
+
+      # Save the digest so the merge job can find it
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-smt-amd64
+          path: /tmp/digests/*
+          retention-days: 1
+
+      - name: Determine tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: apluslms/grade-python
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,enable=${{ github.ref == 'refs/heads/master' }},value=smt-latest
+            type=raw,enable=${{ github.ref != 'refs/heads/master' }},value=smt-${{ needs.prepare.outputs.full_tag }}
+
+      - name: Create and push manifest (single-arch)
+        run: |
+          digest="${{ steps.build.outputs.digest }}"
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            apluslms/grade-python@$digest
+
+  build-mec:
+    name: Build mec image (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    needs:
+      - prepare
+      - merge-math
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build and push platform-specific digest (no manifest tag yet)
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.mec
+          platforms: ${{ matrix.platform }}
+          push: true
+          build-args: |
+            FULL_TAG=${{ needs.prepare.outputs.full_tag }}
+          outputs: type=image,name=apluslms/grade-python,push-by-digest=true,name-canonical=true
+
+      # Save the digest so the merge job can find it
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-mec-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  merge-mec:
+    name: Merge mec manifests
+    runs-on: ubuntu-24.04
+    needs:
+      - prepare
+      - build-mec
+
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-mec-*
+          merge-multiple: true
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Determine tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: apluslms/grade-python
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,enable=${{ github.ref == 'refs/heads/master' }},value=mec-latest
+            type=raw,enable=${{ github.ref != 'refs/heads/master' }},value=mec-${{ needs.prepare.outputs.full_tag }}
+
+      - name: Create and push multi-arch manifest
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf 'apluslms/grade-python@sha256:%s ' *)
+
+  build-psql:
+    name: Build psql image (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    needs:
+      - prepare
+      - merge-base
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build and push platform-specific digest (no manifest tag yet)
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.psql
+          platforms: ${{ matrix.platform }}
+          push: true
+          build-args: |
+            FULL_TAG=${{ needs.prepare.outputs.full_tag }}
+          outputs: type=image,name=apluslms/grade-python,push-by-digest=true,name-canonical=true
+
+      # Save the digest so the merge job can find it
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-psql-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  merge-psql:
+    name: Merge psql manifests
+    runs-on: ubuntu-24.04
+    needs:
+      - prepare
+      - build-psql
+
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-psql-*
+          merge-multiple: true
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Determine tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: apluslms/grade-python
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,enable=${{ github.ref == 'refs/heads/master' }},value=psql-latest
+            type=raw,enable=${{ github.ref != 'refs/heads/master' }},value=psql-${{ needs.prepare.outputs.full_tag }}
+
+      - name: Create and push multi-arch manifest
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf 'apluslms/grade-python@sha256:%s ' *)
+
+  build-comp:
+    name: Build comp image (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    needs:
+      - prepare
+      - merge-base
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build and push platform-specific digest (no manifest tag yet)
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.comp
+          platforms: ${{ matrix.platform }}
+          push: true
+          build-args: |
+            FULL_TAG=${{ needs.prepare.outputs.full_tag }}
+          outputs: type=image,name=apluslms/grade-python,push-by-digest=true,name-canonical=true
+
+      # Save the digest so the merge job can find it
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-comp-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  merge-comp:
+    name: Merge comp manifests
+    runs-on: ubuntu-24.04
+    needs:
+      - prepare
+      - build-comp
+
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-comp-*
+          merge-multiple: true
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Determine tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: apluslms/grade-python
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,enable=${{ github.ref == 'refs/heads/master' }},value=comp-latest
+            type=raw,enable=${{ github.ref != 'refs/heads/master' }},value=comp-${{ needs.prepare.outputs.full_tag }}
+
+      - name: Create and push multi-arch manifest
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf 'apluslms/grade-python@sha256:%s ' *)
